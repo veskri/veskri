@@ -32,17 +32,23 @@ export default function DictationOverlay() {
   useEffect(() => {
     if (overlay.state !== "listening") return;
     let disposed = false;
-    const updateLevel = () => {
-      void invoke<RecordingStatus>("get_recording_status")
-        .then((status) => {
-          if (disposed) return;
-          setInputLevel(status.level);
-          setMeterFrame((frame) => frame + 1);
-        })
-        .catch(() => undefined);
+    let pollInFlight = false;
+    const updateLevel = async () => {
+      if (pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const status = await invoke<RecordingStatus>("get_recording_status");
+        if (disposed) return;
+        setInputLevel(status.level);
+        setMeterFrame((frame) => frame + 1);
+      } catch {
+        // The main window handles recording errors; the overlay can stay quiet.
+      } finally {
+        pollInFlight = false;
+      }
     };
-    updateLevel();
-    const timer = window.setInterval(updateLevel, 50);
+    void updateLevel();
+    const timer = window.setInterval(() => void updateLevel(), 100);
     return () => {
       disposed = true;
       window.clearInterval(timer);

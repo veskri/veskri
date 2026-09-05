@@ -1,6 +1,6 @@
 [package]
 name = "veskri"
-version = "1.5.0"
+version = "1.5.1"
 description = "Fast, private desktop dictation powered by Groq"
 authors = ["Veskri"]
 license = "MIT"
@@ -28,31 +28,34 @@ name = "veskri"
 path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2.5.1", features = [] }
+tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.1", features = ["tray-icon"] }
+atomicwrites = "0.4.4"
+tauri = { version = "2.11.5", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.5.1"
-tauri-plugin-clipboard-manager = "2.3.2"
-tauri-plugin-opener = "2.5.4"
+tauri-plugin-clipboard-manager = "2.3.3"
+tauri-plugin-opener = "2.5.5"
 tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.1"
+tauri-plugin-updater = "2.11.0"
 tauri-plugin-global-shortcut = "2.3.2"
-tauri-plugin-notification = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls", "stream"] }
-fs2 = "0.4"
-sha2 = "0.10"
-sysinfo = "0.37"
-keyring = "4.1.5"
+tauri-plugin-notification = "2.4.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+reqwest = { version = "0.13.4", features = ["json", "multipart", "rustls", "stream"] }
+fs2 = "0.4.3"
+sha2 = "0.11.0"
+sysinfo = "0.39.6"
+keyring = "4.2.0"
 enigo = "0.6.1"
-chrono = { version = "0.4", features = ["serde"] }
-cpal = "0.15.3"
+chrono = { version = "0.4.45", features = ["serde"] }
+cpal = "0.18.2"
 hound = "3.5.1"
-opus-rs = "0.1.23"
-rusqlite = { version = "0.37.0", features = ["bundled"] }
-tauri-plugin-log = "2"
-tauri-plugin-single-instance = "2"
-log = "0.4"
+opus-rs = "0.1.32"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+tauri-plugin-log = "2.9.1"
+tauri-plugin-single-instance = "2.4.4"
+log = "0.4.34"
+tokio = { version = "1.53.1", features = ["time"] }
+uuid = { version = "1.26.0", features = ["v7"] }
 whisper-rs = "=0.16.0"

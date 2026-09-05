@@ -41,6 +41,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
@@ -63,6 +65,11 @@ jobs:
           workspaces: "src-tauri -> target"
           key: ubuntu-quality
       - run: pnpm install --frozen-lockfile
+      - name: Audit JavaScript production dependencies
+        run: pnpm audit --prod --audit-level=high
+      - name: Audit Rust dependencies
+        working-directory: src-tauri
+        run: cargo audit
       - run: pnpm metadata:check
       - run: pnpm format:check
       - run: pnpm types

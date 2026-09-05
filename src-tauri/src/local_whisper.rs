@@ -498,7 +498,11 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         }
         digest.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ use std::{
     fs::File,
     io::BufWriter,
     path::PathBuf,
+    str::FromStr,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Mutex,
@@ -30,6 +31,30 @@ type RecordingError = Arc<Mutex<Option<String>>>;
 
 const SILENCE_THRESHOLD: f32 = 0.008;
 const SILENCE_PADDING_MS: u32 = 120;
+
+fn resolve_output_action(requested: Option<String>, fallback: &str) -> String {
+    requested
+        .filter(|action| matches!(action.as_str(), "paste" | "copy"))
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn microphone_value(device: &cpal::Device) -> String {
+    device
+        .id()
+        .map(|id| id.to_string())
+        .unwrap_or_else(|_| device.to_string())
+}
+
+fn configured_input_device(host: &cpal::Host, configured: &str) -> Option<cpal::Device> {
+    cpal::DeviceId::from_str(configured)
+        .ok()
+        .and_then(|id| host.device_by_id(&id))
+        .or_else(|| {
+            host.input_devices()
+                .ok()?
+                .find(|device| device.to_string() == configured)
+        })
+}
 
 pub(crate) struct NativeRecording {
     stream: cpal::Stream,
@@ -58,7 +83,7 @@ pub(crate) struct RecordingStatus {
 fn wav_spec_from_config(config: &SupportedStreamConfig) -> hound::WavSpec {
     hound::WavSpec {
         channels: config.channels(),
-        sample_rate: config.sample_rate().0,
+        sample_rate: config.sample_rate(),
         bits_per_sample: (config.sample_format().sample_size() * 8) as u16,
         sample_format: if config.sample_format().is_float() {
             hound::SampleFormat::Float
@@ -114,7 +139,7 @@ where
     let stream_config = config.clone().into();
     device
         .build_input_stream(
-            &stream_config,
+            stream_config,
             move |data, _| write_input_data::<T, U>(data, &writer, &level),
             move |stream_error| record_stream_error(&error, stream_error),
             None,
@@ -219,12 +244,11 @@ pub(crate) fn get_microphones() -> Result<Vec<AudioDevice>, String> {
             platform::microphone_permission_hint()
         )
     })? {
-        if let Ok(name) = device.name() {
-            devices.push(AudioDevice {
-                value: name.clone(),
-                label: name,
-            });
-        }
+        let name = device.to_string();
+        devices.push(AudioDevice {
+            value: microphone_value(&device),
+            label: name,
+        });
     }
     Ok(devices)
 }
@@ -262,11 +286,7 @@ pub(crate) fn start_native_recording(state: State<AppState>) -> Result<(), Strin
             )
         })?
     } else {
-        host.input_devices()
-            .map_err(|err| format!("Couldn’t enumerate microphones: {err}"))?
-            .find(|device| {
-                device.name().ok().as_deref() == Some(settings.microphone.as_str())
-            })
+        configured_input_device(&host, &settings.microphone)
             .ok_or_else(|| {
                 format!(
                     "The selected microphone “{}” is unavailable. Reconnect it or choose another microphone in Settings.",
@@ -380,9 +400,7 @@ pub(crate) async fn stop_native_recording(
     if let Some(trimmed_path) = trimmed_path {
         let _ = fs::remove_file(trimmed_path);
     }
-    let output_action = output_action
-        .filter(|action| matches!(action.as_str(), "paste" | "copy"))
-        .unwrap_or(settings.output_action);
+    let output_action = resolve_output_action(output_action, &settings.output_action);
     let result = transcribe_audio(app, &state, audio.clone(), &output_action).await;
     if let Ok(mut failed_audio) = state.last_failed_audio.lock() {
         *failed_audio = result.as_ref().err().map(|_| audio);
@@ -401,9 +419,8 @@ pub(crate) async fn retry_last_transcription(
         .map_err(|_| "Retry is unavailable".to_string())?
         .clone()
         .ok_or_else(|| "There is no failed dictation to retry.".to_string())?;
-    let output_action = output_action
-        .filter(|action| matches!(action.as_str(), "paste" | "copy"))
-        .unwrap_or_else(|| load_settings(&state).output_action);
+    let settings = load_settings(&state);
+    let output_action = resolve_output_action(output_action, &settings.output_action);
     let result = transcribe_audio(app, &state, audio, &output_action).await;
     if result.is_ok() {
         if let Ok(mut failed_audio) = state.last_failed_audio.lock() {
@@ -411,4 +428,17 @@ pub(crate) async fn retry_last_transcription(
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_output_action;
+
+    #[test]
+    fn retry_output_action_accepts_only_supported_values() {
+        assert_eq!(resolve_output_action(Some("copy".into()), "paste"), "copy");
+        assert_eq!(resolve_output_action(Some("paste".into()), "copy"), "paste");
+        assert_eq!(resolve_output_action(Some("type".into()), "copy"), "copy");
+        assert_eq!(resolve_output_action(None, "paste"), "paste");
+    }
 }

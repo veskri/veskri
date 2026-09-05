@@ -1,8 +1,9 @@
 use crate::models::{AppSettings, AppState, Transcript};
+use atomicwrites::{AllowOverwrite, AtomicFile};
 use keyring::Entry;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{fs, io::Write, path::PathBuf};
 
 const APP_SERVICE: &str = "Veskri";
 const KEY_ACCOUNT: &str = "groq-api-key";
@@ -26,7 +27,9 @@ pub(crate) fn read_json<T: for<'a> Deserialize<'a>>(path: PathBuf) -> Option<T> 
 }
 pub(crate) fn write_json<T: Serialize>(path: PathBuf, value: &T) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(value).map_err(|err| err.to_string())?;
-    fs::write(path, bytes).map_err(|err| err.to_string())
+    AtomicFile::new(path, AllowOverwrite)
+        .write(|file| file.write_all(&bytes))
+        .map_err(|err| err.to_string())
 }
 pub(crate) fn load_settings(state: &AppState) -> AppSettings {
     let path = settings_path(state);
@@ -145,8 +148,49 @@ pub(crate) fn secure_entry() -> Result<Entry, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{history_limit, sort_history};
-    use crate::models::{AppSettings, Transcript};
+    use super::{
+        history_limit, history_path, load_history, load_settings, read_json, save_history,
+        settings_path, sort_history, write_json,
+    };
+    use crate::{
+        models::{AppSettings, AppState, Transcript},
+        transcription::TranscriptionAudio,
+    };
+    use std::{
+        env, fs,
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicBool, AtomicU32},
+            Arc, Mutex,
+        },
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn test_dir() -> PathBuf {
+        let path = env::temp_dir().join(format!(
+            "veskri-storage-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir(&path).unwrap();
+        path
+    }
+
+    fn test_state(data_dir: PathBuf) -> AppState {
+        AppState {
+            data_dir,
+            history_lock: Mutex::new(()),
+            recording: Mutex::new(None),
+            recording_level: Arc::new(AtomicU32::new(0)),
+            recording_error: Arc::new(Mutex::new(None)),
+            discord_push_to_mute_held: AtomicBool::new(false),
+            last_failed_audio: Mutex::<Option<TranscriptionAudio>>::new(None),
+            global_shortcut_available: AtomicBool::new(true),
+        }
+    }
 
     fn transcript(id: &str, created_at: &str, pinned: bool) -> Transcript {
         Transcript {
@@ -186,5 +230,74 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["pinned", "new", "older"]
         );
+    }
+
+    #[test]
+    fn json_writes_replace_existing_settings() {
+        let path = env::temp_dir().join(format!(
+            "veskri-storage-test-{}-{}.json",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos()
+        ));
+
+        write_json(path.clone(), &serde_json::json!({ "version": 1 })).unwrap();
+        write_json(path.clone(), &serde_json::json!({ "version": 2 })).unwrap();
+
+        assert_eq!(
+            read_json::<serde_json::Value>(path.clone()),
+            Some(serde_json::json!({ "version": 2 }))
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn malformed_settings_fall_back_without_panicking() {
+        let dir = test_dir();
+        let state = test_state(dir.clone());
+        fs::write(settings_path(&state), "{").unwrap();
+
+        let settings = load_settings(&state);
+        assert_eq!(settings.hotkey, AppSettings::default().hotkey);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_history_is_migrated_to_sqlite() {
+        let dir = test_dir();
+        let state = test_state(dir.clone());
+        let legacy = vec![transcript("legacy", "2026-01-01T00:00:00Z", false)];
+        write_json(history_path(&state), &legacy).unwrap();
+
+        let migrated = load_history(&state);
+        assert_eq!(migrated.len(), 1);
+        assert_eq!(migrated[0].id, "legacy");
+        assert!(!history_path(&state).exists());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saved_history_survives_a_fresh_read() {
+        let dir = test_dir();
+        let state = test_state(dir.clone());
+        let expected = vec![
+            transcript("first", "2026-01-01T00:00:00Z", false),
+            transcript("second", "2026-01-02T00:00:00Z", true),
+        ];
+
+        save_history(&state, &expected).unwrap();
+        let restored = load_history(&state);
+
+        assert_eq!(restored.len(), 2);
+        assert!(restored.iter().any(|item| item.id == "first"));
+        assert!(restored
+            .iter()
+            .any(|item| item.id == "second" && item.pinned));
+
+        fs::remove_dir_all(dir).unwrap();
     }
 }

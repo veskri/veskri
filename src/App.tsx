@@ -593,7 +593,10 @@ export default function App() {
       return;
     }
     let disposed = false;
+    let pollInFlight = false;
     const poll = async () => {
+      if (pollInFlight) return;
+      pollInFlight = true;
       try {
         const status = await invoke<RecordingStatus>("get_recording_status");
         if (disposed) return;
@@ -605,10 +608,12 @@ export default function App() {
         }
       } catch {
         if (!disposed) cancelRecording("Couldn’t read microphone status");
+      } finally {
+        pollInFlight = false;
       }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 80);
+    const timer = window.setInterval(() => void poll(), 100);
     return () => {
       disposed = true;
       window.clearInterval(timer);

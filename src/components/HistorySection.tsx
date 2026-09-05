@@ -254,7 +254,7 @@ export default function HistorySection({
             return (
               <article
                 key={item.id}
-                className={`${item.pinned ? "pinned" : ""}${selected ? " selected" : ""}`}
+                className={`${item.pinned ? "pinned" : ""}${selected ? "selected" : ""}`}
               >
                 <label className="history-item-select">
                   <input
